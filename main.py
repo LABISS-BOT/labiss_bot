@@ -5,21 +5,26 @@ import numpy as np
 import statsmodels
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import coint, adfuller
-import seaborn as sns; sns.set(style="whitegrid")
 from datetime import datetime
 pd.core.common.is_list_like = pd.api.types.is_list_like
 import schedule as sch
 import datetime
 import telegram
 
-# telegram bot labiss_Bot
-bot = telegram.Bot(token='1889249363:AAH08lmqQcWh-CXJebrWAWNIYjwj-elwPZA')
-chat_id_user1 = 1629806638
-chat_id_user2 = 1818633385
+TEST_MODE = 0
+# TEST_MODE
+# 0 : logic_test
+# 1 : logic_test + telegram test
+# 2 : real test (매수 매도 진행)
 
+if (TEST_MODE > 0):
+    # telegram bot labiss_Bot
+    bot = telegram.Bot(token='1889249363:AAH08lmqQcWh-CXJebrWAWNIYjwj-elwPZA')
+    chat_id_user1 = 1629806638
+    chat_id_user2 = 1818633385
 
 # stationarity_test
-# TODO
+# TODO 꼭 필요한가?
 def stationarity_test(X, cutoff=0.01):
     # H_0 in adfuller is unit root exists (non-stationary)
     # We must observe significant p-value to convince ourselves that the series is stationary
@@ -34,7 +39,6 @@ def myrange(start, end, step):
     while (r < end):
         yield r
         r += step
-
 
 def find_coint_coefficient(pair_df, pair1, pair2):
     spread_df = pd.DataFrame()
@@ -53,36 +57,46 @@ def find_coint_coefficient(pair_df, pair1, pair2):
     print("pvalue min = ", pvalue, "CC = ", min_cc)
     return stable_spread_df['spread'], min_cc
 
+# compute log spread
 def compute_log_spread(pair_df, pair1, pair2, score):
+    # spread_df : spread 저장하는 pandas dataframe
     spread_df = pd.DataFrame()
     spread_df['datetime'] = pair_df['datetime']
     spread_df[pair1] = pair_df[pair1]
     spread_df[pair2] = pair_df[pair2]
-    # spread_df['spread'] = np.log(spread_df[pair1]) - 1 * np.log(spread_df[pair2])
     spread_df['spread'], CC = find_coint_coefficient(pair_df, pair1, pair2)
 
-    # spread_df['spread'] = np.log(spread_df[pair1]) - score * np.log(spread_df[pair2])
-    # print(spread_df)
-
+    # spread_df의 평균과 그래프
     title = str(pair_df['datetime'][0])+'_'+ str(pair1) + '-' + str(pair2) + ' SPREAD'
     ax = plt.gca()
     plt.title(title)
     plt.xlabel('5m candle')
     plt.ylabel(str(pair1) + '-' + str(pair2))
+    # moving average window
+    #TODO 뒤에서 몇개 가져올지
+    window_ = 50
+    spread_df['mean'] = spread_df['spread'].rolling(window_).mean()
+    spread_df['std'] = spread_df['spread'].rolling(window_).std()
+    spread_df['std_plus'] = spread_df['mean'] + spread_df['std']
+    spread_df['std_minus'] = spread_df['mean'] - spread_df['std']
     spread_df.plot(kind='line', x='datetime', y='spread', ax=ax)
-    ax.axhline(spread_df['spread'].mean(), linestyle='--', label='Mean', color='black')
-    ax.axhline(spread_df['spread'].mean() + spread_df['spread'].std(), linestyle='--', label='+Std', color='green')
-    ax.axhline(spread_df['spread'].mean() - spread_df['spread'].std(), linestyle='--', label='+Std', color='red')
+    spread_df.plot(kind='line', x='datetime', y='mean', ax=ax, color='black', linestyle='--')
+    spread_df.plot(kind='line', x='datetime', y='std_plus', ax=ax, color='green', linestyle='--')
+    spread_df.plot(kind='line', x='datetime', y='std_minus', ax=ax, color='red', linestyle='--')
+    # img 저장
     # file_path 최적화 필요
     filename = "".join(i for i in title if i not in "\/:*?<>|")
     file_path = 'spread_img\\'+filename+'.png'
     plt.savefig(file_path)
+    if (TEST_MODE == 0):
+        plt.show()
     plt.close()
-    # plt.show()
-    bot.sendPhoto(chat_id_user1, photo=open(file_path,'rb'))
-    bot.sendPhoto(chat_id_user2, photo=open(file_path,'rb'))
 
-# find cointegrated_pairs for 30 coins in USDT market
+    if (TEST_MODE > 0):
+        bot.sendPhoto(chat_id_user1, photo=open(file_path,'rb'))
+        bot.sendPhoto(chat_id_user2, photo=open(file_path,'rb'))
+
+# find cointegrated_pairs for 25 coins in USDT market
 def find_cointegrated_pairs(data):
     n = data.shape[1]
     print('n', n)
@@ -104,6 +118,8 @@ def find_cointegrated_pairs(data):
                 pairs.append((keys[i], keys[j]))
     return score_matrix, pvalue_matrix, pairs
 
+# market data 긁어오기
+#TODO 변동성이 작을 경우 너무 많은 페어를 잡음
 def market_search(market_search_space):
     print("market search ...")
     pair_df = pd.DataFrame()
@@ -121,6 +137,7 @@ def market_search(market_search_space):
         # pair_df.set_index(df['datetime'], inplace=True)
     print(pair_df.iloc[:, 1:26])
     # 500 개 보여줌 과거 데이터
+    # TODO pairs 찾을 때 최적화 필요
     scores, pvalues, pairs = find_cointegrated_pairs(pair_df.iloc[:, 1:26])
     # print(scores)
     print(pairs)
@@ -134,18 +151,12 @@ def market_search(market_search_space):
         print(pair[1], j)
         print(scores[i][j])
         compute_log_spread(pair_df, pair[0] ,pair[1], scores[i][j])
+    print("Find pair : " ,len(pairs))
 
-    print(len(pairs))
-
-
-    # ax = plt.gca()
-    # pair_df.plot(kind='line', x='datetime', y=pairs[0][0], ax=ax)
-    # pair_df.plot(kind='line', x='datetime', y=pairs[0][1], ax=ax)
-    # plt.show()
 
 if __name__ == '__main__':
     binance = ccxt.binance()
-    #거래량 상위 30개
+    #TODO 거래량 상위 30개 긁어오기
     # markets = binance.load_markets()
     # print(markets.keys())
     # print(len(markets))
@@ -158,17 +169,11 @@ if __name__ == '__main__':
     # while True:
     #     sch.run_pending()
     #     time.sleep(??)
-    # import seaborn
-    # fig, ax = plt.subplots(figsize=(10,10))
-    # seaborn.heatmap(pvalues, xticklabels=tickers, yticklabels=tickers, cmap='RdYlGn_r'
-    #                 , mask = (pvalues >= 0.05)
-    #                 )
 
     # (일자, 시가, 고가, 저가, 종가, 거래량)
     # print("date 시가 고가 저가 종가 거래량")
     # for ohlc in ohlcvs:
     #     print(datetime.fromtimestamp(ohlc[0] / 1000).strftime('%Y-%m-%d %H:%M:%S'), ohlc[1], ohlc[2], ohlc[3],ohlc[4], ohlc[5])
-
 
     # orderbook = binance.fetch_order_book('BTC/USDT')
     # bids 매수 asks 매도 100개 보여줌

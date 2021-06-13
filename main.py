@@ -9,6 +9,7 @@ from datetime import datetime
 pd.core.common.is_list_like = pd.api.types.is_list_like
 import schedule as sch
 import telegram
+import calendar
 
 TEST_MODE = 3
 # TEST_MODE
@@ -52,9 +53,12 @@ def show_plot(spread_df, mean, std_plus, std_minus, title):
     plt.xlabel('5m candle')
     plt.ylabel(title)
     spread_df.plot(kind='line', x='datetime', y='spread', ax=ax)
+    std = std_plus - mean
     plt.axhline(y=mean, color='black', linestyle='--')
     plt.axhline(y=std_plus, color='green', linestyle='--')
     plt.axhline(y=std_minus, color='red', linestyle='--')
+    plt.axhline(y=std_plus + std, color='green')
+    plt.axhline(y=std_minus - std, color='red')
     # img 저장
     # file_path 최적화 필요
     filename = "".join(i for i in title if i not in "\/:*?<>|")
@@ -196,8 +200,8 @@ def select_action(pair_df, mean, std, std_plus, std_minus, CC, pvalue):
         buy_short_symbol = pair_df.columns.values[1]
         buy_long_price = pair_df[buy_long_symbol].iloc[-1]
         buy_short_price = pair_df[buy_short_symbol].iloc[-1]
-        buy_long_num = money / 2.0 / buy_long_price
-        buy_short_num = money / 2.0 / buy_short_price
+        buy_long_num = money / (CC+1) / buy_long_price
+        buy_short_num = (money * CC) / (CC + 1) / buy_short_price
         position = 1
     elif position == 0 and (curr_value <= std_minus) and ((pvalue < 0.05) and (curr_value <= mean+2*std and curr_value >= mean-2*std)):
         print('+++++++++++++buy+++++++++++++')
@@ -205,8 +209,8 @@ def select_action(pair_df, mean, std, std_plus, std_minus, CC, pvalue):
         buy_short_symbol = pair_df.columns.values[2]
         buy_long_price = pair_df[buy_long_symbol].iloc[-1]
         buy_short_price = pair_df[buy_short_symbol].iloc[-1]
-        buy_long_num = money / 2.0 / buy_long_price
-        buy_short_num = money / 2.0 / buy_short_price
+        buy_long_num = (money * CC) / (CC + 1) / buy_long_price
+        buy_short_num = money / (CC + 1) / buy_short_price
         position = 1
 
 
@@ -220,22 +224,25 @@ def back_test(market_search_space, money, leverage, candle_count, window, since=
     pair_df_raw_ = pd.DataFrame()
     pair_df_raw = pd.DataFrame()
     pair_df = pd.DataFrame()
-    # pair1 = 'ETH/USDT'
-    # pair2 = 'AAVE/USDT'
-    # for market_key in [pair1, pair2]:
-    #     ohlcv = binance.fetch_ohlcv(symbol=market_key, timeframe='5m', limit=candle_count)
-    #     df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
-    #     df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
-    #     pair_df_raw['datetime'] = df['datetime']
-    #     pair_df_raw[market_key] = df['close']
-    for market_key in market_search_space:
-            ohlcv = binance.fetch_ohlcv(symbol=market_key, timeframe='5m', limit=candle_count)
+    start_dt = []
+    since_dt = []
+    for i in since:
+        start_dt_ = datetime.strptime(i, "%Y%m%d")
+        start_dt.append(calendar.timegm(start_dt_.utctimetuple()) * 1000)
+    print(start_dt)
+    # 5분봉 x 1000개 max candle * to ms
+    interval = 5 * 1000 * 60 * 1000
+    for since in range(start_dt[0],start_dt[1],interval):
+        pair_temp = pd.DataFrame()
+        for market_key in market_search_space:
+            ohlcv = binance.fetch_ohlcv(symbol=market_key, timeframe='5m', limit=candle_count, since=since)
             df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
-            pair_df_raw_['datetime'] = df['datetime']
-            pair_df_raw_[market_key] = df['close']
-
-    # pair 찾기
+            pair_temp['datetime'] = df['datetime']
+            pair_temp[market_key] = df['close']
+        pair_df_raw_ = pd.concat([pair_df_raw_, pair_temp], ignore_index=True)
+        # print(pair_df_raw_)
+    # # pair 찾기
     pair_df_ = pair_df_raw_.iloc[0:window]
     scores, pvalues, pairs = find_cointegrated_pairs(pair_df_.iloc[:, 1:26])
     pair = min(pvalues.keys(), key=lambda k: pvalues[k])
@@ -251,17 +258,6 @@ def back_test(market_search_space, money, leverage, candle_count, window, since=
     init_money = money
     for i in range(0, candle_count-window):
         pair_df = pair_df_raw.iloc[i:i+window]
-        # scores, pvalues, pairs = find_cointegrated_pairs(pair_df_.iloc[:, 1:26])
-        # print(min(pvalues.keys(), key=lambda k: pvalues[k]))
-        # pair = min(pvalues.keys(), key=lambda k: pvalues[k])
-        # pair1 = pair[0]
-        # pair2 = pair[1]
-        # print('min pvalue pair : ', pair[0],'-',pair[1])
-        # pair_df = pd.DataFrame()
-        # pair_df['datetime'] = pair_df_['datetime']
-        # pair_df[pair1] = pair_df_[pair1]
-        # pair_df[pair2] = pair_df_[pair2]
-        # print(pair_df)
         pair_df['spread'], CC , pvalue = find_coint_coefficient(pair_df, pair1, pair2)
         mean = pair_df['spread'].mean()
         std = pair_df['spread'].std()
@@ -270,7 +266,7 @@ def back_test(market_search_space, money, leverage, candle_count, window, since=
         title = "test"
         # print(pair_df)
         select_action(pair_df, mean, std, std_plus, std_minus ,CC, pvalue)
-        # show_plot(pair_df, mean, std_plus, std_minus, title)
+        show_plot(pair_df, mean, std_plus, std_minus, title)
         print('Show me the money : ', money)
 
     print('Ratio', money/init_money*100)
@@ -281,14 +277,17 @@ if __name__ == '__main__':
     # markets = binance.load_markets()
     # print(markets.keys())
     # print(len(markets))
-    market_search_space = ['ETH/USDT','BTC/USDT','BNB/USDT','XRP/USDT','MATIC/USDT','ADA/USDT','DOT/USDT',
-        'WRX/USDT','LINK/USDT','VET/USDT','EOS/USDT','LTC/USDT','ETC/USDT','UNI/USDT','SOL/USDT','CAKE/USDT','THETA/USDT',
-        'AAVE/USDT','FIL/USDT','BCH/USDT','LUNA/USDT','TRX/USDT','XLM/USDT','SXP/USDT','BAKE/USDT']
+    # market_search_space = ['ETH/USDT','BTC/USDT','BNB/USDT','XRP/USDT','MATIC/USDT','ADA/USDT','DOT/USDT',
+    #     'WRX/USDT','LINK/USDT','VET/USDT','EOS/USDT','LTC/USDT','ETC/USDT','UNI/USDT','SOL/USDT','CAKE/USDT','THETA/USDT',
+    #     'AAVE/USDT','FIL/USDT','BCH/USDT','LUNA/USDT','TRX/USDT','XLM/USDT','SXP/USDT','BAKE/USDT']
+    market_search_space = ['ETH/USDT','BTC/USDT','XRP/USDT','ADA/USDT','LINK/USDT','VET/USDT','EOS/USDT','LTC/USDT','ETC/USDT',
+        'BCH/USDT','TRX/USDT','XLM/USDT']
     if (TEST_MODE != 3):
         market_search(market_search_space)
     else:
         # money, leverage, candle_count, window
-        back_test(market_search_space, money, 5, 1000, 800)
+        date = ['20210601', '20210613']
+        back_test(market_search_space, money, 5, 1000, 800, date)
     # sch.every(5).minutes.do(market_search,market_search_space)
 
     # while True:

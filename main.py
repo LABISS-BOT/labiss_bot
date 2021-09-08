@@ -763,6 +763,10 @@ def position_check(curr_position, pair1, pair2):
 
     if pair1_key in curr_position and pair1_open_orders == False:
         print("pair1 position exist")
+        if pair1_position:
+            del buy_wait_dict[pair1]
+        else:
+            del sell_wait_dict[pair1]
         result_pos = True
     else:
         # 시장가 주문
@@ -807,6 +811,10 @@ def position_check(curr_position, pair1, pair2):
     if pair2_key in curr_position and pair2_open_orders == False:
         print("pair2 position exist")
         result_pos = True
+        if pair2_position:
+            del buy_wait_dict[pair2]
+        else:
+            del sell_wait_dict[pair2]
     else:
         # 시장가 주문
         # pair_dict[(pair1, pair2)][]
@@ -1070,7 +1078,7 @@ def labiss_main(market_search_space, leverage, window, buy_sigma, sigma):
                     select_buy_mvg(pair_df, pair1, pair2, mean, std, std_plus, std_minus, CC, pvalue, leverage, window, buy_sigma, sigma)
                 # select_buy(pair_df, pair1, pair2, mean, std, std_plus, std_minus, CC, pvalue, leverage, window, buy_sigma,sigma)
                 # show_plot(pair_df, mean, std_plus, std_minus, title)
-            del scores, pvalues, pairs
+            del scores, pvalues, pairs, pair_df_
         except Exception as e:
             print(e)
             send_message(chat_id_user, str(e))
@@ -1078,7 +1086,7 @@ def labiss_main(market_search_space, leverage, window, buy_sigma, sigma):
     # print('Show me the money : ', money)
     send_message(chat_id_user, '********* [LABISS Deactive] *********')
     gc.collect()
-    del pair_df, pair_df_
+    del pair_df
 
     # memory trace
     time2 = tc.take_snapshot()
